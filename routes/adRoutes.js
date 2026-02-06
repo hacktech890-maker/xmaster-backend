@@ -1,261 +1,145 @@
 const express = require('express');
 const router = express.Router();
-const Ad = require('../models/Ad');
-const { simpleAdminAuth } = require('../middleware/adminAuth');
+const jwt = require('jsonwebtoken');
+const Category = require('../models/Category');
+const Video = require('../models/Video');
 
-// ==================== PUBLIC ROUTES ====================
+// Admin Auth Middleware
+const simpleAdminAuth = (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Access denied' });
+    }
+    const token = authHeader.split(' ')[1];
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    if (!decoded.isAdmin) return res.status(401).json({ error: 'Invalid token' });
+    req.admin = decoded;
+    next();
+  } catch (error) {
+    res.status(401).json({ error: 'Authentication failed' });
+  }
+};
 
-// GET /api/ads - Get All Active Ads
+// GET /api/categories
 router.get('/', async (req, res) => {
   try {
-    const { device = 'desktop' } = req.query;
-    
-    const now = new Date();
-    
-    const ads = await Ad.find({
-      enabled: true,
-      $or: [
-        { device: 'all' },
-        { device: device }
-      ],
-      $or: [
-        { startDate: null },
-        { startDate: { $lte: now } }
-      ],
-      $or: [
-        { endDate: null },
-        { endDate: { $gte: now } }
-      ]
-    }).sort({ priority: -1, placement: 1 });
-    
-    // Group by placement
-    const adsByPlacement = {};
-    ads.forEach(ad => {
-      if (!adsByPlacement[ad.placement]) {
-        adsByPlacement[ad.placement] = [];
-      }
-      adsByPlacement[ad.placement].push(ad);
-    });
-    
-    res.json({ 
-      success: true, 
-      ads: adsByPlacement 
-    });
+    const categories = await Category.find({ isActive: true }).sort({ order: 1, name: 1 });
+    res.json({ success: true, categories });
   } catch (error) {
-    console.error('Get Ads Error:', error);
-    res.status(500).json({ error: 'Failed to get ads' });
+    console.error('Get Categories Error:', error);
+    res.status(500).json({ error: 'Failed to get categories' });
   }
 });
 
-// GET /api/ads/:placement - Get Ad by Placement
-router.get('/placement/:placement', async (req, res) => {
+// GET /api/categories/:slug
+router.get('/:slug', async (req, res) => {
   try {
-    const { device = 'desktop' } = req.query;
-    const now = new Date();
-    
-    const ad = await Ad.findOne({
-      placement: req.params.placement,
-      enabled: true,
-      $or: [
-        { device: 'all' },
-        { device: device }
-      ],
-      $or: [
-        { startDate: null },
-        { startDate: { $lte: now } }
-      ],
-      $or: [
-        { endDate: null },
-        { endDate: { $gte: now } }
-      ]
-    }).sort({ priority: -1 });
-    
-    if (!ad) {
-      return res.json({ success: true, ad: null });
+    const category = await Category.findOne({ slug: req.params.slug, isActive: true });
+    if (!category) return res.status(404).json({ error: 'Category not found' });
+    res.json({ success: true, category });
+  } catch (error) {
+    console.error('Get Category Error:', error);
+    res.status(500).json({ error: 'Failed to get category' });
+  }
+});
+
+// GET /api/categories/:slug/videos
+router.get('/:slug/videos', async (req, res) => {
+  try {
+    const { page = 1, limit = 20, sort = 'newest' } = req.query;
+    const category = await Category.findOne({ slug: req.params.slug, isActive: true });
+    if (!category) return res.status(404).json({ error: 'Category not found' });
+
+    let sortOption = {};
+    switch (sort) {
+      case 'oldest': sortOption = { uploadDate: 1 }; break;
+      case 'views': sortOption = { views: -1 }; break;
+      default: sortOption = { uploadDate: -1 };
     }
-    
-    res.json({ success: true, ad });
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const [videos, total] = await Promise.all([
+      Video.find({ category: category._id, status: 'public' })
+        .populate('category', 'name slug')
+        .sort(sortOption)
+        .skip(skip)
+        .limit(parseInt(limit)),
+      Video.countDocuments({ category: category._id, status: 'public' })
+    ]);
+
+    res.json({
+      success: true,
+      category,
+      videos,
+      pagination: { page: parseInt(page), limit: parseInt(limit), total, pages: Math.ceil(total / parseInt(limit)) }
+    });
   } catch (error) {
-    console.error('Get Ad Error:', error);
-    res.status(500).json({ error: 'Failed to get ad' });
+    console.error('Get Category Videos Error:', error);
+    res.status(500).json({ error: 'Failed to get category videos' });
   }
 });
 
-// POST /api/ads/:id/impression - Record Impression
-router.post('/:id/impression', async (req, res) => {
-  try {
-    await Ad.findByIdAndUpdate(req.params.id, { $inc: { impressions: 1 } });
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Impression Error:', error);
-    res.status(500).json({ error: 'Failed to record impression' });
-  }
-});
-
-// POST /api/ads/:id/click - Record Click
-router.post('/:id/click', async (req, res) => {
-  try {
-    await Ad.findByIdAndUpdate(req.params.id, { $inc: { clicks: 1 } });
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Click Error:', error);
-    res.status(500).json({ error: 'Failed to record click' });
-  }
-});
-
-// ==================== ADMIN ROUTES ====================
-
-// GET /api/ads/admin/all - Get All Ads (Admin)
-router.get('/admin/all', simpleAdminAuth, async (req, res) => {
-  try {
-    const ads = await Ad.find().sort({ placement: 1, priority: -1 });
-    res.json({ success: true, ads });
-  } catch (error) {
-    console.error('Get All Ads Error:', error);
-    res.status(500).json({ error: 'Failed to get ads' });
-  }
-});
-
-// GET /api/ads/placements - Get Available Placements
-router.get('/admin/placements', simpleAdminAuth, (req, res) => {
-  const placements = [
-    { id: 'home_top', name: 'Home - Top Banner', size: '728x90' },
-    { id: 'home_sidebar', name: 'Home - Sidebar', size: '300x600' },
-    { id: 'home_infeed', name: 'Home - In-Feed', size: 'Native' },
-    { id: 'home_footer', name: 'Home - Footer', size: '728x90' },
-    { id: 'watch_sidebar', name: 'Watch - Sidebar', size: '300x250' },
-    { id: 'watch_below', name: 'Watch - Below Player', size: '728x90' },
-    { id: 'watch_related', name: 'Watch - Related Videos', size: 'Native' },
-    { id: 'watch_overlay', name: 'Watch - Video Overlay', size: '480x70' },
-    { id: 'search_top', name: 'Search - Top', size: '728x90' },
-    { id: 'category_top', name: 'Category - Top', size: '728x90' },
-    { id: 'popunder', name: 'Popunder', size: 'Full Page' },
-    { id: 'interstitial', name: 'Interstitial', size: 'Full Page' }
-  ];
-  
-  res.json({ success: true, placements });
-});
-
-// POST /api/ads - Create Ad (Admin)
+// POST /api/categories (Admin)
 router.post('/', simpleAdminAuth, async (req, res) => {
   try {
-    const {
+    const { name, description, thumbnail, icon, color } = req.body;
+    if (!name) return res.status(400).json({ error: 'Category name is required' });
+
+    const existing = await Category.findOne({ name: { $regex: new RegExp(`^${name}$`, 'i') } });
+    if (existing) return res.status(400).json({ error: 'Category already exists' });
+
+    const category = await Category.create({
       name,
-      placement,
-      type,
-      code,
-      imageUrl,
-      targetUrl,
-      device,
-      enabled,
-      startDate,
-      endDate,
-      priority,
-      size
-    } = req.body;
-    
-    if (!name || !placement || !code) {
-      return res.status(400).json({ error: 'Name, placement, and code are required' });
-    }
-    
-    const ad = await Ad.create({
-      name,
-      placement,
-      type: type || 'script',
-      code,
-      imageUrl: imageUrl || '',
-      targetUrl: targetUrl || '',
-      device: device || 'all',
-      enabled: enabled !== false,
-      startDate: startDate || null,
-      endDate: endDate || null,
-      priority: priority || 0,
-      size: size || { width: 728, height: 90 }
+      description: description || '',
+      thumbnail: thumbnail || '',
+      icon: icon || '📁',
+      color: color || '#ef4444'
     });
-    
-    res.json({ 
-      success: true, 
-      ad,
-      message: 'Ad created successfully'
-    });
+
+    res.json({ success: true, category, message: 'Category created successfully' });
   } catch (error) {
-    console.error('Create Ad Error:', error);
-    res.status(500).json({ error: 'Failed to create ad' });
+    console.error('Create Category Error:', error);
+    res.status(500).json({ error: 'Failed to create category' });
   }
 });
 
-// PUT /api/ads/:id - Update Ad (Admin)
+// PUT /api/categories/:id (Admin)
 router.put('/:id', simpleAdminAuth, async (req, res) => {
   try {
-    const ad = await Ad.findById(req.params.id);
-    
-    if (!ad) {
-      return res.status(404).json({ error: 'Ad not found' });
-    }
-    
-    const updateFields = [
-      'name', 'placement', 'type', 'code', 'imageUrl', 'targetUrl',
-      'device', 'enabled', 'startDate', 'endDate', 'priority', 'size'
-    ];
-    
-    updateFields.forEach(field => {
-      if (req.body[field] !== undefined) {
-        ad[field] = req.body[field];
-      }
-    });
-    
-    await ad.save();
-    
-    res.json({ 
-      success: true, 
-      ad,
-      message: 'Ad updated successfully'
-    });
+    const { name, description, thumbnail, icon, color, isActive, order } = req.body;
+    const category = await Category.findById(req.params.id);
+    if (!category) return res.status(404).json({ error: 'Category not found' });
+
+    if (name) category.name = name;
+    if (description !== undefined) category.description = description;
+    if (thumbnail !== undefined) category.thumbnail = thumbnail;
+    if (icon) category.icon = icon;
+    if (color) category.color = color;
+    if (isActive !== undefined) category.isActive = isActive;
+    if (order !== undefined) category.order = order;
+
+    await category.save();
+    res.json({ success: true, category, message: 'Category updated successfully' });
   } catch (error) {
-    console.error('Update Ad Error:', error);
-    res.status(500).json({ error: 'Failed to update ad' });
+    console.error('Update Category Error:', error);
+    res.status(500).json({ error: 'Failed to update category' });
   }
 });
 
-// DELETE /api/ads/:id - Delete Ad (Admin)
+// DELETE /api/categories/:id (Admin)
 router.delete('/:id', simpleAdminAuth, async (req, res) => {
   try {
-    const ad = await Ad.findByIdAndDelete(req.params.id);
-    
-    if (!ad) {
-      return res.status(404).json({ error: 'Ad not found' });
-    }
-    
-    res.json({ 
-      success: true, 
-      message: 'Ad deleted successfully'
-    });
-  } catch (error) {
-    console.error('Delete Ad Error:', error);
-    res.status(500).json({ error: 'Failed to delete ad' });
-  }
-});
+    const category = await Category.findById(req.params.id);
+    if (!category) return res.status(404).json({ error: 'Category not found' });
 
-// PUT /api/ads/:id/toggle - Toggle Ad Status (Admin)
-router.put('/:id/toggle', simpleAdminAuth, async (req, res) => {
-  try {
-    const ad = await Ad.findById(req.params.id);
-    
-    if (!ad) {
-      return res.status(404).json({ error: 'Ad not found' });
-    }
-    
-    ad.enabled = !ad.enabled;
-    await ad.save();
-    
-    res.json({ 
-      success: true, 
-      enabled: ad.enabled,
-      message: ad.enabled ? 'Ad enabled' : 'Ad disabled'
-    });
+    await Video.updateMany({ category: category._id }, { $set: { category: null } });
+    await Category.findByIdAndDelete(req.params.id);
+
+    res.json({ success: true, message: 'Category deleted successfully' });
   } catch (error) {
-    console.error('Toggle Ad Error:', error);
-    res.status(500).json({ error: 'Failed to toggle ad' });
+    console.error('Delete Category Error:', error);
+    res.status(500).json({ error: 'Failed to delete category' });
   }
 });
 

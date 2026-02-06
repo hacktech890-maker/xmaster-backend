@@ -6,32 +6,23 @@ require('dotenv').config();
 
 const app = express();
 
-// Import Routes
-const adminRoutes = require('./routes/adminRoutes');
-const videoRoutes = require('./routes/videoRoutes');
-const uploadRoutes = require('./routes/uploadRoutes');
-const categoryRoutes = require('./routes/categoryRoutes');
-const adRoutes = require('./routes/adRoutes');
-const searchRoutes = require('./routes/searchRoutes');
-const analyticsRoutes = require('./routes/analyticsRoutes');
-const publicRoutes = require('./routes/publicRoutes');
-
 // Middleware
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // CORS Configuration
-const allowedOrigins = process.env.FRONTEND_URL 
-  ? process.env.FRONTEND_URL.split(',') 
+const allowedOrigins = process.env.FRONTEND_URL
+  ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
   : ['http://localhost:3000'];
 
 app.use(cors({
   origin: function (origin, callback) {
     if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) !== -1 || allowedOrigins.includes('*')) {
+    if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
       callback(null, true);
     } else {
-      callback(null, true); // Allow all in development
+      console.log('CORS blocked origin:', origin);
+      callback(null, true);
     }
   },
   credentials: true,
@@ -41,41 +32,46 @@ app.use(cors({
 
 // Rate Limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 1000, // limit each IP to 1000 requests per windowMs
+  windowMs: 15 * 60 * 1000,
+  max: 1000,
   message: { error: 'Too many requests, please try again later.' }
 });
 app.use('/api/', limiter);
 
 // MongoDB Connection
-mongoose.connect(process.env.MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-.then(() => console.log('✅ MongoDB Connected Successfully'))
-.catch(err => console.error('❌ MongoDB Connection Error:', err));
+mongoose.connect(process.env.MONGODB_URI)
+  .then(() => console.log('✅ MongoDB Connected Successfully'))
+  .catch(err => console.error('❌ MongoDB Connection Error:', err));
 
-// Routes
+// Import Routes
+const adminRoutes = require('./routes/adminRoutes');
+const videoRoutes = require('./routes/videoRoutes');
+const uploadRoutes = require('./routes/uploadRoutes');
+const categoryRoutes = require('./routes/categoryRoutes');
+const adRoutes = require('./routes/adRoutes');
+const searchRoutes = require('./routes/searchRoutes');
+const publicRoutes = require('./routes/publicRoutes');
+
+// Use Routes
 app.use('/api/admin', adminRoutes);
 app.use('/api/videos', videoRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/ads', adRoutes);
 app.use('/api/search', searchRoutes);
-app.use('/api/analytics', analyticsRoutes);
 app.use('/api/public', publicRoutes);
 
 // Health Check
 app.get('/', (req, res) => {
-  res.json({ 
-    message: 'Video Platform API is running!',
+  res.json({
+    message: 'XMASTER API is running!',
     status: 'healthy',
     timestamp: new Date().toISOString()
   });
 });
 
 app.get('/api/health', (req, res) => {
-  res.json({ 
+  res.json({
     status: 'ok',
     mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
   });
@@ -90,8 +86,7 @@ app.use((req, res) => {
 app.use((err, req, res, next) => {
   console.error('Error:', err);
   res.status(err.status || 500).json({
-    error: err.message || 'Internal Server Error',
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+    error: err.message || 'Internal Server Error'
   });
 });
 

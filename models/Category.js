@@ -1,5 +1,4 @@
 const mongoose = require('mongoose');
-const slugify = require('slugify');
 
 const categorySchema = new mongoose.Schema({
   name: {
@@ -39,22 +38,17 @@ const categorySchema = new mongoose.Schema({
   },
   color: {
     type: String,
-    default: '#6366f1'
+    default: '#ef4444'
   }
 }, {
   timestamps: true
 });
 
-// Create slug before saving
 categorySchema.pre('save', function(next) {
-  if (this.name && (!this.slug || this.isModified('name'))) {
-    this.slug = slugify(this.name, { lower: true, strict: true });
+  if (this.name && !this.slug) {
+    this.slug = this.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   }
   next();
 });
-
-// Index
-categorySchema.index({ order: 1 });
-categorySchema.index({ isActive: 1 });
 
 module.exports = mongoose.model('Category', categorySchema);

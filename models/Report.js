@@ -33,11 +33,6 @@ const reportSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
-  resolvedBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Admin',
-    default: null
-  },
   resolvedAt: {
     type: Date,
     default: null
@@ -45,9 +40,5 @@ const reportSchema = new mongoose.Schema({
 }, {
   timestamps: true
 });
-
-// Index
-reportSchema.index({ status: 1, createdAt: -1 });
-reportSchema.index({ videoId: 1 });
 
 module.exports = mongoose.model('Report', reportSchema);
