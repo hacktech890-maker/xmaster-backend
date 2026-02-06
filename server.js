@@ -6,6 +6,9 @@ require('dotenv').config();
 
 const app = express();
 
+// Trust proxy for Render deployment
+app.set('trust proxy', 1);
+
 // Middleware
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
@@ -34,7 +37,9 @@ app.use(cors({
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 1000,
-  message: { error: 'Too many requests, please try again later.' }
+  message: { error: 'Too many requests, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 app.use('/api/', limiter);
 
@@ -77,6 +82,17 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Debug route to check if password is set (remove in production later)
+app.get('/api/debug/check-env', (req, res) => {
+  res.json({
+    adminPasswordSet: !!process.env.ADMIN_PASSWORD,
+    adminPasswordLength: process.env.ADMIN_PASSWORD ? process.env.ADMIN_PASSWORD.length : 0,
+    jwtSecretSet: !!process.env.JWT_SECRET,
+    mongodbUriSet: !!process.env.MONGODB_URI,
+    frontendUrl: process.env.FRONTEND_URL || 'not set'
+  });
+});
+
 // 404 Handler
 app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
@@ -95,4 +111,5 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🔐 Admin password set: ${!!process.env.ADMIN_PASSWORD}`);
 });
